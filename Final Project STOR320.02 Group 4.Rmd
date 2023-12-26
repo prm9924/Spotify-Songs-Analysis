@@ -1,0 +1,854 @@
+---
+title: "Final Paper"
+author: "STOR 320.02 Group 4"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+#Put Necessary Libraries Here
+library(caret)
+library(class)
+library(stringr)
+library(dplyr)
+library(gganimate)
+library(ggplot2)
+library(ISLR2)
+library(boot)
+library(readxl)
+library(stringr)
+library(gridExtra)
+library(leaps)
+library(ggstatsplot)
+library(tidyr)
+library(ggridges)
+library(readr)
+library(lubridate)
+library(kableExtra)
+```
+
+# INTRODUCTION
+
+Nearly everyone listens to music, whether it be through their old Sony Walkman, an mp3 player, the radio, or one of the many now popular streaming platforms such as Spotify or Apple Music. Our data contains Spotify streaming data, which we wanted to use to explore trends and potential relationships in customer listening habits. We divided our analysis into two primary avenues to better explore Spotify listening trends. 
+
+The first avenue explores trends among the top Spotify songs from 2010 to 2023. It doesn’t take much listening to realize that popular music has changed significantly over time; just listen to any ABBA from the 70s, Eminem from the early 2000s, or The Weeknd today. It is fairly evident that top songs and genres change over time, but how they change is not as clear. Thus our first question is how have the characteristics of top Spotify songs changed throughout the years 2010 to 2023? Are there any noticeable trends in these changes? The answers to this question could provide valuable insights for record labels, marketing companies, artist managers, producers, songwriters, and vocalists. Understanding trends in popular music is crucial to upcoming artists trying to gain popularity or already popular artists trying to remain at the top of the charts. Adapting to these lucrative characteristics found in top Spotify songs could help drive streams, recognition, and revenue.
+
+Our second avenue of analysis aims to classify genres of Spotify tracks. One of our analysts is a music producer who spent a summer in Chicago studying electronic dance music (EDM) and producing EDM tracks. In doing so, he was able to understand the nuances of major EDM subgenres. Even with hundreds of subgenres, most EDM listeners will say the genre overall has a distinct, beat-heavy sound comprised of undulating synths and massive drops. Due to EDM’s distinct style, we wanted to investigate whether or not we could predict if a song is EDM. Given the Spotify “Million Songs” dataset which contains song data of approximately 114000 random songs from Spotify, can we develop a classification model to determine if a specific song is EDM?
+
+Platforms such as Spotify or Apple Music utilize algorithms to recommend music to customers, and creating a model to classify EDM songs would allow us to begin to understand how Spotify's recommendation system. We dabble into the process by which Spotify has built a much applauded reccomendation system for its users. Our model could ultimately provide EDM fans with a more personalized experience if it is able to accurately decide whether a song is EDM or not. Additionally, uncovering the characteristics that distinguish EDM could help EDM producers gain a deeper understanding of the genre and produce more meaningful music.
+
+# DATA
+
+The Spotify 2020-2021 dataset contains variables that describe each song. This dataset was created by Sashank Pillai, a contributor on Kaggle. There are 1556 songs of different genres and times in this dataset along with 23 variables. Basic information variables include year, genre, release date, etc., and song characteristics including energy, danceability, valence, acousticness, tempo, loudness and speechiness are all scaled between 0 and 1. The 2020-2021 dataset contains all songs from Spotify that were in the Spotify Top 200 Weekly Global Charts in 2020 & 2021. However, this dataset contains songs made years, sometimes even decades, before they made the Top 200 list. Therefore, we used this dataset based on release date to determine the song’s year, and later used this to investigate the trend of songs. Below is a correlation plot of all the attributes by which the songs are measured. This serves to give you an idea of what variables are in the dataset and how they are related to one another.
+```{r, echo = F, message=F}
+# Import Data Below
+#Load all top Spotify datasets
+spotify10_19 <- read.csv("spotify-2010_2019.csv", sep = ",")
+
+spotify20_21 <- read.csv("spotify-2020_2021.csv", sep = ",")
+
+spotify23 <- read.csv("spotify-2023.csv", sep = ",")
+
+#Load Spotify datasets with all songs (not just top)
+million_songs <- read_csv("million songs.csv")
+tracks <- read_csv("spotify tracks dataset.csv")
+
+#Rename columns for consistency
+spotify10_19_rename <- rename(spotify10_19, "Song.Name" = "title", "Artist" = "artist", "Genre" = "top.genre", "Billboard.Year" = "year", "Tempo" = "bpm", "Energy" = "nrgy", "Danceability" = "dnce", "Loudness" = "dB", "Liveness" = "live", "Valence" = "val", "Duration" = "dur", "Acousticness" = "acous", "Speechiness" = "spch", "Popularity" = "pop")
+
+#Mutate 2020-2021 duration to seconds (not ms), drop commas from streams, convert attributes for consistency
+spotify20_21_rename <- mutate(spotify20_21, "Streams" = as.numeric(gsub(",", "", Streams)), "Duration" = Duration..ms. / 1000, "Danceability" = Danceability*100, "Energy" = Energy*100, "Speechiness" = Speechiness*100, "Acousticness" = Acousticness*100, "Liveness" = Liveness*100, "Valence" = Valence*100) %>% rename("Key" = "Chord")
+
+#Rename 2023 columns for consistency
+spotify23_rename <- rename(spotify23, "Song.Name" = "track_name", "Artist" = "artist.s._name", "Streams" = "streams", "Tempo" = "bpm", "Key" = "key", "Danceability" = "danceability_.", "Valence" = "valence_.", "Energy" = "energy_.", "Acousticness" = "acousticness_.", "Instrumentalness" = "instrumentalness_.", "Liveness" = "liveness_.", "Speechiness" = "speechiness_.")
+
+#Join 2010-2019 and 2020-2021 data
+spotify10_21 <- merge(spotify10_19_rename, spotify20_21_rename, all.x = TRUE, all.y = TRUE) %>% 
+  select(-c("X", "Duration..ms.")) %>%
+  select("Song.Name", "Artist", "Genre", "Billboard.Year", everything())
+
+spotify_data <- spotify20_21_rename %>% separate(Release.Date, into = c("Release.Year", "Month", "Day"), sep = "-", remove = FALSE, convert = TRUE, extra = "merge", fill = "right")%>%mutate(Dance = Danceability) %>% select(Release.Year,Genre,Popularity,Energy, Dance, Tempo, Valence, Loudness)
+```
+```{r,echo=F,fig.width=11,fig.height=6,fig.align='center'}
+# choose attributes of songs
+tracks_attrs <- tracks[, c( 6 : ncol(tracks)-1 )]
+
+# correlogram
+ggstatsplot::ggcorrmat(
+  data = tracks_attrs,
+  type = "parametric",
+  colors = c("darkred", "white", "steelblue")
+)
+```
+In creating a classification model for our second question, we did not want to use the dataset containing only top Spotify tracks because it would be biased, neglecting the countless more songs that do not appear in Billboard Top 200’s. Instead, we used the “Spotify Tracks Dataset,” also obtained from Kaggle. This dataset contains 114,000 songs over a range of 125 different genres, with data pulled using the Spotify API. Because of this, the variables of interest are similar to our earlier datasets, looking at popularity, duration, danceability, energy, loudness, mode, speechiness, acousticness, instrumentalness, liveness, valence, and tempo. This dataset also has additional variables useful for classification, such as whether a song is explicit, the key of the song, mode (major or minor), and time signature. We created a new indicator variable 'is_EDM', which is 0 if a song is not part of the EDM genre group and 1 if a song is. Later, we explain the reason and criteria for creating an EDM genre group. The boxplot below demonstrates the average popularity, danceability, energy, loudness, speechiness, acousticness, instrumentalness, liveness, and valence of EDM vs non-EDM songs. While there seem to be some differences, such as higher median popularity, danceability, energy, and loudness, and lower acousticness, the boxplots all overlap, so we cannot make any conclusions.
+
+```{r, fig.width=10,fig.height=10,fig.align='center', echo=F}
+#First create an indicator for EDM or not
+tracks2 <- tracks %>%
+  mutate(is_EDM = ifelse(track_genre == "edm", "Yes", "No"))
+
+attributes <- c("popularity", "danceability", "energy", "loudness", "speechiness", "acousticness", "instrumentalness", "liveness", "valence")
+
+plots <- lapply(attributes, function(attribute) {
+  ggplot(tracks2, aes(x = is_EDM, y = .data[[attribute]], fill = factor(is_EDM))) +
+    geom_boxplot() +
+    labs(title = paste(attribute, "for EDM vs. Not EDM"),
+         x = "is EDM?",
+         y = "") +
+    theme_minimal()
+})
+
+grid.arrange(grobs = plots, ncol = 3)
+
+```
+
+# RESULTS
+ 
+## Question 1
+Let's get to our first question, where we attempt to answer the following areas of concerns through visualization: It is fairly obvious that top songs and genres will change over time, but it is not as clear how they change. How do characteristics of top Spotify songs change between the years of 2010 and 2023? Are there apparent patterns in which attributes are more prevalent in certain time periods than others? Is there some sort of diminishing in certain genres or features?
+
+```{r, message=F, warning=F, echo = F}
+spotify20_21_rename <- spotify20_21_rename %>% 
+  mutate(Duration = Duration / 1000)
+
+for (i in 1:nrow(spotify20_21_rename)){
+  if(is.na(spotify20_21_rename$Genre[i])) {
+    spotify20_21_rename$Genre[i] <- NA
+  } else if(str_detect(spotify20_21_rename$Genre[i], "latin")) {
+    spotify20_21_rename$Genre[i] <- "latin"
+  } else if(str_detect(spotify20_21_rename$Genre[i], "rock")) {
+    spotify20_21_rename$Genre[i] <- "rock"
+  } else if(str_detect(spotify20_21_rename$Genre[i], "rap")) {
+    spotify20_21_rename$Genre[i] <- "rap"
+  } else if(str_detect(spotify20_21_rename$Genre[i], "hip hop")) {
+    spotify20_21_rename$Genre[i] <- "hip hop"
+  } else if(str_detect(spotify20_21_rename$Genre[i], "pop")) {
+    spotify20_21_rename$Genre[i] <- "pop"
+  } else {
+    spotify20_21_rename$Genre[i] <- "other"
+  }
+}
+spotify20_21_rename <- spotify20_21_rename %>% separate(Release.Date, into = c("Release.Year", "Month", "Day"), sep = "-", remove = FALSE, convert = TRUE, extra = "merge", fill = "right")%>%mutate(Dance = Danceability) %>% select(Release.Year,Genre,Popularity,Energy, Dance, Tempo, Valence, Loudness)
+breaks <- c(1963, 2009, 2015, 2019, 2020, 2021, Inf)
+spotify_stats <- spotify20_21_rename %>% mutate(Time.Bin = cut(Release.Year, breaks = breaks, labels = c("1963-2009", "2010-2015", "2016-2019", "2020", "2021", "2022+"), include.lowest = TRUE))
+features <- c("Energy", "Dance", "Tempo", "Valence", "Loudness")
+
+
+spotify20_21_rename$Genre <- as.factor(spotify20_21_rename$Genre)
+spotify20_21_rename <- spotify20_21_rename %>% filter(Genre == "pop") %>% mutate(across(c(Energy, Dance, Tempo, Valence, Loudness), ~scale(.) %>% as.vector))
+
+
+period_genre_popularity <- spotify_stats %>%
+  select(where(~ any(!is.na(.))))%>%
+  group_by(Time.Bin, Genre) %>%
+  summarize(AveragePopularity = mean(Popularity, na.rm = TRUE)) %>%
+  ungroup()
+
+g <- ggplot(period_genre_popularity, aes(x=reorder(Genre, -AveragePopularity), y = AveragePopularity, fill = Genre)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  coord_flip() +
+  labs(title = 'Average Popularity of Genres in {closest_state}', x = 'Genre', y = 'Average Popularity') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  transition_states(Time.Bin, transition_length = 2, state_length = 1)
+
+animated_plot <- animate(g, nframes = 100, duration=10,width = 800, height = 600)
+animated_plot
+```
+
+
+To create a visualization that encapsulates user learning history on Spotify from 2020-2021, the decision to divide the dataset into five distinct time periods reflects an analytical approach to understanding long-term trends in musical preferences. The range from 1942 to 2021 encompasses a vast array of musical evolutions, and by segmenting this timeline into five parts -- 1942-2009, 2010-2015, 2016-2019, 2020, and 2021 -- each interval can represent key phases in music history. These could correspond to notable developments such as the birth and maturation of rock and roll, the advent of digital music, the streaming revolution, and the global pandemic's impact on music consumption. For rock, pop, latin and hip-pop music, in addition to the impact of the epidemic in 2020, people of these genres prefer to listen to songs that were released in the year closest to the present. However, rap music is different. Rap music released from 1942 to 2015 is more popular than rap music released later. From the overall popularity, we can find that, except for the missing data from 2010-2015, Latin music is the most popular. Choosing an animated bar chart allows us to observe the dynamic progression of genre popularity across these defined eras. This form of visualization is particularly adept at illustrating temporal changes because it conveys not only the static information about genre popularity at given points, but also the transition between these points, providing a narrative of how user preferences change in songs in different genres and different years. As pop music has consistently been one of the most popular genres over time, we decided to investigate how its defining attributes have changed throughout the decades. The provided radar charts give us a visual exploration into this evolution, specifically looking at the standardized attributes of pop music from 1963 to 2021. These attributes include Energy, Danceability, Tempo, Valence, and Loudness, which are critical in determining the overall "liveliness" of the music. By calculating the confidence interval between upper bound and lower bound of each attribute, we are able to observe the general liveliness and the variability of songs in different eras. From a broad perspective, the trend in pop music from the expansive era of 1963 to 2009 shows a wide diversity in emotional content and energy, with a significant contraction in variability observed in the following years. By 2020 and 2021, the data suggests a convergence towards a more standardized pop sound, with songs closely adhering to a specific set of energetic and emotional characteristics. 
+
+```{r, echo=F}
+for (i in 1:nrow(
+spotify20_21_rename)){
+  if(str_detect(
+spotify20_21_rename$Genre[i], "latin") == TRUE){
+spotify20_21_rename$Genre[i] = "latin"}
+  else if(str_detect(spotify20_21_rename$Genre[i], "rock") == TRUE){
+   
+spotify20_21_rename$Genre[i] = "rock"}
+  else if(str_detect(
+spotify20_21_rename$Genre[i], "rap")){
+    
+spotify20_21_rename$Genre[i] = "hip hop"}
+  else if(str_detect(
+spotify20_21_rename$Genre[i], "hip hop") == TRUE){
+    
+spotify20_21_rename$Genre[i] = "hip hop"}
+  else if(str_detect(
+spotify20_21_rename$Genre[i], "pop") == TRUE){
+   
+spotify20_21_rename$Genre[i] = "pop"}
+  else{
+    
+spotify20_21_rename$Genre[i] = "other"
+  }
+}
+```
+```{r, echo=F}
+library(dplyr)
+
+spotify_data <- spotify20_21_rename %>% select(Release.Year,Genre,Popularity,Energy, Dance, Tempo, Valence, Loudness)
+  
+```
+```{r, echo=F}
+spotify_data <- spotify_data %>% filter(Genre == "pop") %>% mutate(across(c(Energy, Dance, Tempo, Valence, Loudness), ~scale(.) %>% as.vector))
+breaks <- c(1963, 2009, 2015, 2019, 2020, 2021, Inf)
+spotify_stats <- spotify_data %>% mutate(Time.Bin = cut(Release.Year, breaks = breaks, labels = c("1963-2009", "2010-2015", "2016-2019", "2020", "2021", "2022+"), include.lowest = TRUE))
+features <- c("Energy", "Dance", "Tempo", "Valence", "Loudness")
+
+```
+```{r, echo=F}
+spotify_datastats <- data.frame()
+for(feature in features) {
+  spotify_feature_summary <-spotify_stats %>%
+    group_by(Time.Bin) %>%
+    summarize(
+      Mean = mean(!!sym(feature), na.rm = TRUE),
+      N = n(),
+      SD = sd(!!sym(feature), na.rm = TRUE),
+      .groups = 'keep'  # Keep the grouping structure
+    ) %>%
+    mutate(
+      UpperBound = Mean + (SD / sqrt(N)),
+      LowerBound = Mean - (SD / sqrt(N)),
+      Feature = feature
+    ) %>%
+    select(Time.Bin, Feature, Mean, N, SD, UpperBound, LowerBound)
+  spotify_datastats <- bind_rows(spotify_datastats,spotify_feature_summary)
+}
+
+# Print the summarized data frame
+#print(spotify_datastats)
+```
+```{r, echo=F}
+radar_data <- spotify_datastats %>% select(Time.Bin, Feature, UpperBound, LowerBound) %>% gather(key = "Bound", value = "Value", -Feature,-Time.Bin)%>% mutate(Feature = factor(Feature, levels = c("Energy", "Dance", "Tempo", "Valence", "Loudness")))
+
+radar_charts <- ggplot(radar_data, aes(x = Feature, y = Value, group = Bound, color = Bound)) +geom_polygon(aes(fill = Bound), alpha = 0.1) + coord_polar() + facet_wrap(~ Time.Bin) + ggtitle("Pop Songs Liveliness by Era")+theme_minimal() + theme (axis.text.x = element_text(size = 4.5),plot.title = element_text(hjust = 0.5)) 
+
+print(radar_charts)
+```
+
+After cleaning out the 2020-2021 Spotify dataset we managed to create several pie charts showing the changes in the genre distribution over time. We used a for loop combined with the string detect function to aggregate different genres into the more general genres of “hip hop”, “latin”, “pop”, “rock”, and “other.” These general genres were selected because they each had at least 30 occurrences in both 2020 and 2021. Since some songs were released years if not decades before they charted on the Top 200 list, we decided to use the "Release Year" variable instead of the “Weeks Charted” variable to better represent the music of each era. To better visualize trends, we organized the years into the following bins, “1942-2009”, “2010-2015”, “2016-2019”, “2020”, and “2021.” The pie charts based on the aforementioned bins show how the distribution of genres in the top songs dataset changes over time. We can draw a few meaningful conclusions from this visual. For one, rock and other songs made before 2009 tend to make a resurgence in the Spotify 2020-2021 Top 200 charts. The same cannot be said for latin, hip hop, and pop songs. The proportion of pop has declined between 2010 and 2021, from just over half of all songs to  about 1/3 of all of the top songs. Meanwhile, the proportion of latin songs has slightly increased from 2016 to 2021. The share of hip-hop songs has steadily increased since 2010, from less than 5% in the 2010-2015 bin to about 25% of top songs in the 2021 bin.
+
+```{r, warning=F, echo=FALSE}
+spotify20_21 <- read.csv("spotify-2020_2021.csv")
+
+
+spotify10_19_rename = rename(spotify10_19, "Song.Name" = "title", "Artist" = "artist", "Genre" = "top.genre", "Year" = "year", "Tempo" = "bpm", "Energy" = "nrgy", "Danceability" = "dnce", "Loudness" = "dB", "Liveness" = "live", "Valence" = "val", "Duration" = "dur", "Acousticness" = "acous", "Speechiness" = "spch", "Popularity" = "pop")
+
+    
+spotify20_21_rename = spotify20_21 %>%
+  rename("Key" = "Chord", "Billboard.Year" = "Release.Date") %>%
+  mutate("Duration" = Duration..ms. / 1000, "Year" = substring(Billboard.Year, 1, 4))
+ 
+
+spotify20_21_rename$Year = as.numeric(spotify20_21_rename$Year)
+
+
+spotify20_21_rename$Billboard.Year = as.numeric(spotify20_21_rename$Billboard.Year)
+
+#Giving the 2020-2021 dataset a year variable. Convert the weeks charted variable into the year said song was popular, just like the Billboard Year variable in the 2010-2019 dataset. 
+#Rename 2023 columns for consistency
+spotify23_rename = rename(spotify23, "Song.Name" = "track_name", "Artist" = "artist.s._name", "Streams" = "streams", "Tempo" = "bpm", "Key" = "key", "Danceability" = "danceability_.", "Valence" = "valence_.", "Energy" = "energy_.", "Acousticness" = "acousticness_.", "Instrumentalness" = "instrumentalness_.", "Liveness" = "liveness_.", "Speechiness" = "speechiness_.")
+
+```
+```{r , message=F, warning=F, echo = FALSE}
+for (i in 1:nrow(spotify20_21_rename)){
+  if(str_detect(spotify20_21_rename$Genre[i], "latin") == TRUE){
+    spotify20_21_rename$Genre[i] = "latin"}
+  else if(str_detect(spotify20_21_rename$Genre[i], "rock") == TRUE){
+    spotify20_21_rename$Genre[i] = "rock"}
+  else if(str_detect(spotify20_21_rename$Genre[i], "rap")){
+    spotify20_21_rename$Genre[i] = "hip hop"}
+  else if(str_detect(spotify20_21_rename$Genre[i], "hip hop") == TRUE){
+    spotify20_21_rename$Genre[i] = "hip hop"}
+  else if(str_detect(spotify20_21_rename$Genre[i], "pop") == TRUE){
+    spotify20_21_rename$Genre[i] = "pop"}
+  else{
+    spotify20_21_rename$Genre[i] = "other"
+  }
+}
+spotify20_21_rename.1 = spotify20_21_rename %>%
+  subset(select = -c(Artist, Song.Name, Index, Highest.Charting.Position, Number.of.Times.Charted, Streams, Artist.Followers, Song.ID, Week.of.Highest.Charting, Billboard.Year, Weeks.Charted, Key)) %>%
+  group_by(Year, Genre) %>%
+  summarize(Mean_Tempo = mean(Tempo), Mean_Energy = mean(Energy), Mean_Danceability = mean(Danceability), Mean_Loudness = mean(Loudness), Mean_Liveness = mean(Liveness), Mean_Valence = mean(Valence), Mean_Duration = mean(Duration), Mean_Acousticness = mean(Acousticness), Mean_Speechiness = mean(Speechiness), Mean_Popularity = mean(Popularity), count = n())
+```
+```{r, echo = FALSE}
+breaks = c(1942, 2009, 2015, 2019, 2020, 2021, Inf)
+spotify20_21.3 = spotify20_21_rename.1 %>%
+  mutate(Time.Bin = cut(Year, breaks = breaks, labels = c("1942-2009", "2010-2015", "2016-2019", "2020", "2021", "2022+"), include.lowest = TRUE)) %>%
+  subset(select = -c(Year)) 
+
+ggplot(spotify20_21.3, aes(fill = Genre, y = count, x = Time.Bin)) + geom_bar(position = "fill", stat = "identity") + xlab("") + coord_polar("y") + theme_minimal() + ggtitle("Distribution of Top Genres Over Time")
+```
+
+
+## Question 2
+
+Given the Spotify tracks dataset containing song data of approximately 114000 random songs from Spotify, can we develop a classification model to determine whether a song is EDM or not? In our initial approach to tackle this question, we considered a binary classification model using logistic regression. We started with a model using the predictors “popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature),” but did not consider any interactions. We then ran 10-fold cross-validation to calculate the model’s sensitivity, its ability to identify true positives, and specificity, its ability to identify true negatives. This basic model had a sensitivity of 0.000 and a specificity of 1.000, meaning it was completely ineffective at identifying EDM songs but perfectly predicted when a song was not EDM. We then considered first-order interactions such as popularity * danceability, which could capture the possibility EDM songs tend to be more popular and danceable, or speechiness * acousticness, which could capture the possibility EDM songs tend to have less words and acoustic instruments. Unfortunately, this first-order model still had a sensitivity of 0.000 and specificity of 1.000. Considering second and third-order interactions still did not improve the sensitivity, which stayed at 0.000. Due to the complexity of the third-order model, we then ran a backwards selection method to obtain the “best” model, based on AIC, which is an estimator of prediction error relative quality of statistical models. This yet again yielded a sensitivity of 0.000 and specificity of 1.000. After considering five models all without any true positive predictions, we considered the possibility that the models were unable to predict due to the relatively small number of EDM tracks as compared to over 100,000 other tracks. As an alternative approach to improve prediction, we now wanted to consider clumping together similar subgenres of EDM. We ran a k-nearest-neighbors algorithm to calculate the distance of EDM to all other genres based on the standardized means of each attribute and obtained a table with the nearest genres, pictured below.
+
+
+```{r, echo = FALSE}
+#Clearly, these models can't predict EDM or not. This may be due to such a low number of EDM songs to predict in the first place. Let's group similar genres to EDM together with KNN.
+dist.func=function(point1,point2){
+  dist=sqrt(sum((point1-point2)^2))
+  return(dist)
+}
+
+tracks_knn <- tracks[, -c(1:5)]
+
+attr_avgs <- tracks_knn %>%
+  group_by(track_genre) %>%
+  summarise(across(everything(), mean))
+
+# standardizing data
+attr_avgs_scaled = predict(preProcess(attr_avgs, method = c("center", "scale")), attr_avgs)
+
+
+# distance function
+dist.func=function(point1,point2){
+  dist=sqrt(sum((point1-point2)^2))
+  return(dist)
+}
+
+# edmD contains a table of the distance from acoustic to ever other genre in order to find the most similar genres
+edmPoint <- attr_avgs_scaled[attr_avgs_scaled$track_genre == "edm",]
+emdOtherPoints <- attr_avgs_scaled[attr_avgs_scaled$track_genre != "edm",]
+edmAttrs <- edmPoint[, -1]
+
+edmD <- mutate(emdOtherPoints, d = apply(emdOtherPoints[,-1], 1, dist.func, point2=edmAttrs)) %>% select(track_genre, d) %>%
+  arrange(d)
+kable(head(edmD, 10))
+```
+
+Many of the closest genres, such as house, electro, groove, dance, progressive house, deep house, and electronic make perfect sense to be closest in distance to others. Some surprising genres to see were alternative, alternative rock, and reggae, but it makes sense that they would be similar in attributes to EDM, due to their beat and instrument-heavy styles. We then aggregated the top 19 closest EDM subgenres, which were any subgenres closer than 6 in distance, into a group to rerun each of the five models we created earlier. We were finally able to achieve a sensitivity greater than 0.000 after aggregating subgenres, although specificity dropped slightly. The table and bar chart below show how each model performs before and after clumping.
+
+
+```{r, echo = FALSE}
+tracks3 <- tracks %>%
+  mutate(is_EDM = ifelse(track_genre == "edm", 1, 0))
+
+TRAIN <- tracks3[,c("is_EDM", "popularity", "duration_ms", "explicit", "danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "time_signature")]
+
+#No interactions
+logmod = glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature), data=TRAIN)
+
+```
+```{r, echo = FALSE}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature), data = TRAIN[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity0 <- TP / (TP + FN)
+specificity0 <- TN / (TN + FP)
+
+```
+
+```{r, echo = FALSE, warning=F}
+#Consider first order interactions to see if this improves the model
+logmod1 = glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo, data=TRAIN)
+
+```
+```{r, echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo, data = TRAIN[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity1 <- TP / (TP + FN)
+specificity1 <- TN / (TN + FP)
+
+```
+
+
+```{r, echo=F}
+#Consider second order interactions to see if this improves the model
+logmod2 = glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo + popularity*danceability*energy + speechiness*acousticness*instrumentalness + danceability*energy*loudness, data=TRAIN)
+```
+
+```{r, echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo + popularity*danceability*energy + speechiness*acousticness*instrumentalness + danceability*energy*loudness, data = TRAIN[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity2 <- TP / (TP + FN)
+specificity2 <- TN / (TN + FP)
+
+```
+
+```{r, echo = FALSE, warning=F}
+#Finally let's consider third order interactions to see if this improves the model
+logmod3 = glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo + popularity*danceability*energy + speechiness*acousticness*instrumentalness + danceability*energy*loudness + popularity*danceability*energy*tempo + danceability*energy*loudness*speechiness + instrumentalness*liveness*valence*acousticness, data=TRAIN)
+```
+
+```{r, echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo + popularity*danceability*energy + speechiness*acousticness*instrumentalness + danceability*energy*loudness + popularity*danceability*energy*tempo + danceability*energy*loudness*speechiness + instrumentalness*liveness*valence*acousticness, data = TRAIN[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity3 <- TP / (TP + FN)
+specificity3 <- TN / (TN + FP)
+
+```
+
+```{r, echo = FALSE, warning=F}
+#Now that we have a super complex model, let's run a model selection method to simplify it
+library(leaps)
+
+# Stepwise regression with backward selection
+step2 <- step(logmod3, direction = "backward", trace = FALSE)
+
+
+```
+```{r, echo = FALSE}
+bestlogmod = glm(formula = is_EDM ~ popularity + duration_ms + explicit + 
+    danceability + energy + loudness + as.factor(key) + as.factor(mode) + 
+    speechiness + acousticness + instrumentalness + liveness + 
+    valence + tempo + as.factor(time_signature) + popularity:danceability + 
+    danceability:energy + speechiness:acousticness + as.factor(key):as.factor(mode) + 
+    popularity:energy + speechiness:instrumentalness + acousticness:instrumentalness + 
+    danceability:loudness + energy:loudness + popularity:tempo + 
+    danceability:tempo + energy:tempo + danceability:speechiness + 
+    energy:speechiness + loudness:speechiness + instrumentalness:liveness + 
+    instrumentalness:valence + acousticness:liveness + acousticness:valence + 
+    speechiness:acousticness:instrumentalness + danceability:energy:loudness + 
+    popularity:danceability:tempo + danceability:energy:tempo + 
+    danceability:energy:speechiness + danceability:loudness:speechiness + 
+    energy:loudness:speechiness + acousticness:instrumentalness:liveness + 
+    acousticness:instrumentalness:valence, data = TRAIN)
+```
+
+```{r, echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN), train)
+
+  logmod_temp <- glm(formula = is_EDM ~ popularity + duration_ms + explicit + 
+    danceability + energy + loudness + as.factor(key) + as.factor(mode) + 
+    speechiness + acousticness + instrumentalness + liveness + 
+    valence + tempo + as.factor(time_signature) + popularity:danceability + 
+    danceability:energy + speechiness:acousticness + as.factor(key):as.factor(mode) + 
+    popularity:energy + speechiness:instrumentalness + acousticness:instrumentalness + 
+    danceability:loudness + energy:loudness + popularity:tempo + 
+    danceability:tempo + energy:tempo + danceability:speechiness + 
+    energy:speechiness + loudness:speechiness + instrumentalness:liveness + 
+    instrumentalness:valence + acousticness:liveness + acousticness:valence + 
+    speechiness:acousticness:instrumentalness + danceability:energy:loudness + 
+    popularity:danceability:tempo + danceability:energy:tempo + 
+    danceability:energy:speechiness + danceability:loudness:speechiness + 
+    energy:loudness:speechiness + acousticness:instrumentalness:liveness + 
+    acousticness:instrumentalness:valence, data = TRAIN[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity4 <- TP / (TP + FN)
+specificity4 <- TN / (TN + FP)
+```
+
+```{r, echo = FALSE}
+#Clearly, these models can't predict EDM or not. This may be due to such a low number of EDM songs to predict in the first place. Let's group similar genres to EDM together with KNN.
+dist.func=function(point1,point2){
+  dist=sqrt(sum((point1-point2)^2))
+  return(dist)
+}
+
+tracks_knn <- tracks[, -c(1:5)]
+
+attr_avgs <- tracks_knn %>%
+  group_by(track_genre) %>%
+  summarise(across(everything(), mean))
+
+# standardizing data
+attr_avgs_scaled = predict(preProcess(attr_avgs, method = c("center", "scale")), attr_avgs)
+
+
+# distance function
+dist.func=function(point1,point2){
+  dist=sqrt(sum((point1-point2)^2))
+  return(dist)
+}
+
+# edmD contains a table of the distance from acoustic to ever other genre in order to find the most similar genres
+edmPoint <- attr_avgs_scaled[attr_avgs_scaled$track_genre == "edm",]
+emdOtherPoints <- attr_avgs_scaled[attr_avgs_scaled$track_genre != "edm",]
+edmAttrs <- edmPoint[, -1]
+
+edmD <- mutate(emdOtherPoints, d = apply(emdOtherPoints[,-1], 1, dist.func, point2=edmAttrs)) %>% select(track_genre, d) %>%
+  arrange(d)
+```
+
+```{r, echo = FALSE}
+#From the KNN, we can pull the top 19 similar genres to EDM (that are actually EDM):
+tracks4 <- tracks3
+
+tracks4$is_EDM <- 0
+
+edm_genres <- c("edm","house","electro","groove","dance","progressive-house","deep-house","electronic","dub","garage","hardcore",
+                "dubstep","club","trance","dancehall","hardstyle","breakbeat","techno","drum-and-bass","chicago-house")
+
+for (i in 1:nrow(tracks3)) {
+  if (tracks4$track_genre[i] %in% edm_genres) {
+    tracks4$is_EDM[i] <- 1
+  }
+}
+
+TRAIN2 <- tracks4[,c("is_EDM", "popularity", "duration_ms", "explicit", "danceability", "energy", "key", "loudness", "mode", "speechiness", "acousticness", "instrumentalness", "liveness", "valence", "tempo", "time_signature")]
+```
+```{r, echo = FALSE}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN2$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN2), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature), data = TRAIN2[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN2[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN2$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN2$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN2$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN2$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity0.1 <- TP / (TP + FN)
+specificity0.1 <- TN / (TN + FP)
+
+```
+
+```{r, echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN2$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN2), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo, data = TRAIN2[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN2[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN2$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN2$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN2$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN2$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity1.1 <- TP / (TP + FN)
+specificity1.1 <- TN / (TN + FP)
+
+```
+
+```{r, echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN2$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN2), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo + popularity*danceability*energy + speechiness*acousticness*instrumentalness + danceability*energy*loudness, data = TRAIN2[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN2[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN2$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN2$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN2$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN2$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity2.1 <- TP / (TP + FN)
+specificity2.1 <- TN / (TN + FP)
+```
+
+```{r, , echo = FALSE, warning=F}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN2$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN2), train)
+
+  logmod_temp <- glm(is_EDM ~ popularity + duration_ms + explicit + danceability + energy + loudness + as.factor(key) + as.factor(mode) + speechiness + acousticness + instrumentalness + liveness + valence + tempo + as.factor(time_signature) + popularity*danceability + danceability*energy + speechiness*acousticness + as.factor(key)*as.factor(mode) + as.factor(time_signature)*tempo + popularity*danceability*energy + speechiness*acousticness*instrumentalness + danceability*energy*loudness + popularity*danceability*energy*tempo + danceability*energy*loudness*speechiness + instrumentalness*liveness*valence*acousticness, data = TRAIN2[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN2[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN2$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN2$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN2$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN2$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity3.1 <- TP / (TP + FN)
+specificity3.1 <- TN / (TN + FP)
+```
+
+```{r, echo = FALSE}
+k_folds <- 10
+trainIndex <- createFolds(TRAIN2$is_EDM, k = k_folds)
+
+TP <- 0
+TN <- 0
+FP <- 0
+FN <- 0
+
+# Perform k-fold cross-validation with k=10
+for (i in 1:k_folds) {
+  train <- trainIndex[[i]]
+  test <- setdiff(1:nrow(TRAIN2), train)
+
+  logmod_temp <- glm(formula = is_EDM ~ popularity + duration_ms + explicit + 
+    danceability + energy + loudness + as.factor(key) + as.factor(mode) + 
+    speechiness + acousticness + instrumentalness + liveness + 
+    valence + tempo + as.factor(time_signature) + popularity:danceability + 
+    danceability:energy + speechiness:acousticness + as.factor(key):as.factor(mode) + 
+    popularity:energy + speechiness:instrumentalness + acousticness:instrumentalness + 
+    danceability:loudness + energy:loudness + popularity:tempo + 
+    danceability:tempo + energy:tempo + danceability:speechiness + 
+    energy:speechiness + loudness:speechiness + instrumentalness:liveness + 
+    instrumentalness:valence + acousticness:liveness + acousticness:valence + 
+    speechiness:acousticness:instrumentalness + danceability:energy:loudness + 
+    popularity:danceability:tempo + danceability:energy:tempo + 
+    danceability:energy:speechiness + danceability:loudness:speechiness + 
+    energy:loudness:speechiness + acousticness:instrumentalness:liveness + 
+    acousticness:instrumentalness:valence, data = TRAIN2[train, ])
+
+  predictions <- predict(logmod_temp, newdata = TRAIN2[test, ], type = "response")
+
+  TP <- TP + sum(TRAIN2$is_EDM[test] == 1 & predictions > 0.5)
+  TN <- TN + sum(TRAIN2$is_EDM[test] == 0 & predictions <= 0.5)
+  FP <- FP + sum(TRAIN2$is_EDM[test] == 0 & predictions > 0.5)
+  FN <- FN + sum(TRAIN2$is_EDM[test] == 1 & predictions <= 0.5)
+}
+
+# Calculate sensitivity and specificity
+sensitivity4.1 <- TP / (TP + FN)
+specificity4.1 <- TN / (TN + FP)
+```
+```{r, echo = FALSE}
+sensitivity_values <- list(sensitivity0, sensitivity1, sensitivity2, sensitivity3, sensitivity4, sensitivity0.1, sensitivity1.1, sensitivity2.1, sensitivity3.1, sensitivity4.1)
+specificity_values <- list(specificity0, specificity1, specificity2, specificity3, specificity4, specificity0.1, specificity1.1, specificity2.1, specificity3.1, specificity4.1)
+
+model_names <- c("No Interactions", "First Order", "Second Order", "Third Order", "Backwards Selection", "No Interactions (Clumped)", "First Order (Clumped)", "Second Order (Clumped)", "Third Order (Clumped)", "Backwards Selection (Clumped)")
+
+SensSpecTable <- data.frame(Model = model_names, Sensitivity = unlist(sensitivity_values), Specificity = unlist(specificity_values))
+colnames(SensSpecTable) <- c("Model", "Sensitivity", "Specificity")
+SensSpecTable$Sensitivity <- round(SensSpecTable$Sensitivity, 4)
+SensSpecTable$Specificity <- round(SensSpecTable$Specificity, 4)
+
+kable(SensSpecTable)
+
+SensSpecTableGather <- gather(SensSpecTable, "Sensitivity", "Specificity", key = "Measure", value = "Value")
+SensSpecTableGather$Model = factor(SensSpecTableGather$Model, levels = model_names)
+```
+
+
+```{r, fig.width=11,fig.height=6,fig.align='center', echo = FALSE}
+SensSpecPlot <- ggplot(data=SensSpecTableGather, aes(x = Model, y = Value, fill = Measure)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme(axis.text.x = element_text(angle = 90, vjust=0.5)) +
+  labs(title = "Sensitivity and Specificity for the Evaluated Models")
+SensSpecPlot
+```
+
+From the table, we can see that clumping genres improves the model’s sensitivity, and that higher order models had higher sensitivity, with the highest being approximately 11.6%. The “best” model from backwards selection actually had a lower sensitivity, but this is to be expected since removing predictors naturally lowers the prediction effectiveness. Overall, it seems that the binary classification model is not particularly effective at classifying songs as EDM or not. Since our binary classification model is not yet adequate enough to effectively predict whether a song is EDM or not, let us instead approach this problem with a slightly different model. This time, we will consider a k-Nearest-Neighbor algorithm. The basic methodology is as follows; We will still contain an EDM group, by creating a variable ‘is_edm’ to contain the true classification of each song. Then, we will split the data into a training and testing set with an 80/20 split respectively. We will train the knn model on the training set and then attempt to classify each song in the testing set as EDM or not EDM. For each song in the test set, the model finds the Euclidean distance between itself and every other point in the training set, finds the 5 songs which are the closest in distance, and classifies it as whichever class occurred the most in those top 5. We chose 5 for k by using 10-fold cross validation to optimize k. This knn method in contrast to any other previous model yielded the most accurate results. We tried changing how many genres defined our edm group and many different values for k, but ultimately, keeping the top 19 closest genres to EDM in the EDM group and using the 5 nearest neighbors gave us an accuracy of .85, and sensitivity of .94, and a specificity of .46. Our model correctly predicted whether a song was EDM or not 85% of the time.
+
+```{r, echo=F}
+# Making a EDM group which includes the top 19 closest electronic sub-genres to EDM
+edm_genres <- c("edm","house","electro","groove","dance","progressive-house","deep-house","electronic","dub","garage","hardcore",
+                "dubstep","club","trance","dancehall","hardstyle","breakbeat","techno","drum-and-bass","chicago-house")
+
+tracks_knn_groups2 <- mutate(tracks_knn, is_edm=0)
+
+for (i in 1:nrow(tracks_knn_groups2)) {
+  if (tracks_knn_groups2$track_genre[i] %in% edm_genres) {
+    tracks_knn_groups2$is_edm[i] <- 1
+  }
+}
+
+# remove track genre since our class is edm now
+tracks_knn_groups3 <- tracks_knn_groups2[,-16]
+
+# making the label column (genre) a factor variable
+tracks_knn_groups3$is_edm <- factor(tracks_knn_groups3$is_edm)
+
+# splitting data into train and test data
+set.seed(1)
+splitIndexes <- createDataPartition(tracks_knn_groups3$is_edm, 
+                                   times=1, 
+                                   p = .8, 
+                                   list = FALSE)
+train <- tracks_knn_groups3[splitIndexes, ]
+test <- tracks_knn_groups3[-splitIndexes, ]
+
+# standardizing the variables
+preProcValues <- preProcess(train, method = c("center", "scale"))
+trainTransformed <- predict(preProcValues, train)
+testTransformed <- predict(preProcValues, test)
+
+# # cross validation (cv) to find best k for the model
+# # This is commented out because we do not want to run this when knitting the file because it takes a very long time
+# # Instead we use the optimized k in the upcoming code that we found when we ran this cv previously
+# tracks_cv <- train(track_genre ~ .,
+#                    data=trainTransformed,
+#                    method="knn",
+#                    trControl=trainControl(method="cv"),
+#                    tuneGrid=data.frame(k=seq(1, round(sqrt(nrow(train))), 2))
+#                    )
+
+# using best k to train knn model
+test_pred <- knn3(is_edm ~ .,
+                  data = trainTransformed,
+                  k = 5
+                 )
+
+# model evaluation
+predictions <- predict(test_pred, testTransformed,type = "class")
+# Calculate confusion matrix
+cm6 <- confusionMatrix(predictions, testTransformed$is_edm)
+cm6
+
+# displaying results
+kable(data.frame(Accuracy = cm6$overall["Accuracy"],
+           Sensitivity = cm6$byClass["Sensitivity"],
+           Specificity = cm6$byClass["Specificity"]))
+```
+
+
+# CONCLUSION
+In this paper, we wanted to address two questions: how trends in top Spotify songs changed over time and whether we could classify songs as EDM or not.
+
+In our first question investigating pop songs' attribute over time, our analysis of Spotify user data reveals significant trends in genre popularity with older tracks remaining more popular, suggesting the value of historical and cultural significance within the genre. Latin music consistently ranks high in popularity, indicating its broad appeal and successful marketing strategies. On the other hand, pop music has seen a shift towards a more homogeneous sound in recent years, which could reflect the music industry's adaptation to streaming platforms' algorithms. The radar charts reveal a shift in the musical landscape of pop from 1963 to 2021; pop music displayed a rich diversity in these characteristics initially, but recent years have seen a trend toward uniformity, with songs from 2020 and 2021 showing less variability and more standardization in these attributes. These trends highlight evolving listener preferences and the dynamic nature of music popularity over time. In our second question regarding whether a song can be categorized as EDM, upon employing a k-Nearest-Neighbor (kNN) algorithm, optimized through cross-validation, we achieved a more accurate and reliable model. These results indicate that, despite the complexities and numerous subgenres within EDM, the genre does possess distinctive characteristics that can be effectively captured and recognized through machine learning models.
+
+The way pop songs’ attributes changing over time could signify an industry-wide calibration towards what is deemed popular or marketable in the realm of pop music, potentially influenced by various factors such as technological advancements, changes in consumption habits, and the global reach of music streaming platforms. Analyzing trends over time provides valuable insights into changing listener preferences and cultural shifts, which are essential for artists, record labels, and marketers in strategizing their content creation and marketing efforts. By recognizing patterns, such as the increasing popularity of certain genres or the resurgence of others, stakeholders can make informed decisions about what music to produce and promote. Future research may investigate the relationship between popularity and song characteristic, and whether each era has its unique preference of songs and the reason behind this. Secondly, the ability to accurately classify songs as EDM or not, as demonstrated by our successful implementation of a k-Nearest-Neighbor algorithm, opens up opportunities for personalized music recommendation systems. Such systems can enhance user experience on streaming platforms by accurately suggesting songs that align with their tastes, particularly in genres like EDM with a distinct and recognizable style. Furthermore, our analysis, which yielded high accuracy and sensitivity, illustrates the efficacy of machine learning in understanding and categorizing complex musical landscapes. This not only aids in better music discovery for listeners but also provides valuable data for musicologists and cultural researchers studying the evolution and characteristics of different music genres. Therefore, our analysis is not just about understanding music trends and classification; it's about leveraging these insights to impact the music industry's production, distribution, and consumption in a data-driven era.
+
+Keeping in mind what conclusions we made, we should also address potential drawbacks in our analysis and datset, in particular. Other datasets like user demographic information such as age, location, and cultural background, coupled with individual listening habits could vastly enrich our understanding of genre popularity and the nuanced appeal of specific music styles like EDM. Such data would facilitate a more granular analysis, revealing trends influenced by diverse listener groups. Additionally, detailed metadata about subgenres, artists, and albums, as well as social media interactions and sentiment analysis derived from song lyrics, could provide a richer context and a more nuanced perspective on what drives a song's popularity. Incorporating the release years of Spotify tracks as an additional predictor in our model could significantly enhance its predictive power and accuracy. This data can then be integrated into our existing dataset, providing a temporal dimension that might be crucial in understanding and predicting music trends. The release year of a track can be a vital predictor, offering insights into the evolution of musical styles and preferences over time. By adding release years as a variable in our model, we can explore how the popularity of genres like EDM or the characteristics of top Spotify tracks have changed through different eras. This temporal perspective could also reveal historical patterns, helping to predict future trends and better understand the cyclical nature of music popularity. The inclusion of these data types in our analysis would not only refine our current understanding but also open new avenues for exploration, leading to more comprehensive and actionable insights in the dynamic and evolving landscape of music preferences.
