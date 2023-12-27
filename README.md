@@ -4,4 +4,4 @@ My team and I, using R (ggplot, tidyverse, and more), looked at 5 datasets conta
 Here is a link to our final paper. It is an HTML file knitted from and R markdown file in RStudio.
 [Final Paper](https://rpubs.com/pmish0/1133518)
 
-The original R file is also provided which shows our code.
+While the final paper does not include any code, if you are interested in seeing our code, the original R file is also provided in this repo.
